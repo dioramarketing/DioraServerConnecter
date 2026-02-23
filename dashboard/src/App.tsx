@@ -13,6 +13,7 @@ import { LogsPage } from './pages/Logs';
 import { SharedFoldersPage } from './pages/SharedFolders';
 import { NotificationsPage } from './pages/Notifications';
 import { MessagesPage } from './pages/Messages';
+import { ReleasesPage } from './pages/Releases';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="shared-folders" element={<SharedFoldersPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="messages" element={<MessagesPage />} />
+          <Route path="releases" element={<ReleasesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

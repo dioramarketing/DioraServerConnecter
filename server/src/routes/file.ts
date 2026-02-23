@@ -56,4 +56,20 @@ export default async function fileRoutes(fastify: FastifyInstance) {
     await fileService.renameItem(request.user!.sub!, body.oldPath, body.newPath);
     return reply.send({ success: true });
   });
+
+  // Preview file content (text)
+  fastify.get('/preview', async (request, reply) => {
+    const { path } = request.query as { path: string };
+    if (!path) return reply.code(400).send({ success: false, error: 'path required' });
+    const result = await fileService.previewFile(request.user!.sub!, path);
+    return reply.send({ success: true, data: result });
+  });
+
+  // Search files
+  fastify.get('/search', async (request, reply) => {
+    const { path = '/workspace', query = '' } = request.query as { path?: string; query?: string };
+    if (!query) return reply.code(400).send({ success: false, error: 'query required' });
+    const results = await fileService.searchFiles(request.user!.sub!, path, query);
+    return reply.send({ success: true, data: results });
+  });
 }

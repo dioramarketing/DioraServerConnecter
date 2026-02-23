@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { logActivity } from './audit.service.js';
+import { updateStorageQuota } from './container.service.js';
 
 export async function listUsers() {
   return prisma.user.findMany({
@@ -110,6 +111,15 @@ export async function updateResourceAllocation(params: {
       storageHddGb: params.storageHddGb,
     },
   });
+
+  // Apply actual disk quota changes if storage values were provided
+  if (params.storageSsdGb !== undefined || params.storageHddGb !== undefined) {
+    await updateStorageQuota(
+      params.userId,
+      allocation.storageSsdGb,
+      allocation.storageHddGb,
+    );
+  }
 
   await logActivity({
     userId: params.updatedBy,

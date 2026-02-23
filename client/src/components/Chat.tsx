@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useWsStore } from '../stores/ws';
 import { useAuthStore } from '../stores/auth';
-import { Send, User, MessageSquare } from 'lucide-react';
+import { Send, User, MessageSquare, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface ChatUser {
   id: string;
@@ -27,36 +27,71 @@ export function Chat() {
   const [history, setHistory] = useState<HistoryMessage[]>([]);
   const [input, setInput] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [error, setError] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Load users
-  useEffect(() => {
+  const loadUsers = useCallback(() => {
+    setLoadingUsers(true);
+    setError('');
     api.get<ChatUser[]>('/messages/users')
       .then(setUsers)
-      .catch(() => {})
+      .catch((err) => setError(`Failed to load users: ${err.message}`))
       .finally(() => setLoadingUsers(false));
   }, []);
+
+  useEffect(() => { loadUsers(); }, [loadUsers]);
 
   // Load history when selecting a user
   useEffect(() => {
     if (!selectedUser) return;
+    setLoadingHistory(true);
+    setError('');
     api.get<HistoryMessage[]>(`/messages/dm/${selectedUser.id}?limit=100`)
-      .then((msgs) => setHistory(msgs.reverse()))
-      .catch(() => {});
+      .then((msgs) => {
+        setHistory(msgs.reverse());
+        userScrolledUp.current = false;
+      })
+      .catch((err) => setError(`Failed to load messages: ${err.message}`))
+      .finally(() => setLoadingHistory(false));
   }, [selectedUser]);
 
-  // Auto-scroll
+  // Detect manual scroll
+  const handleScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    userScrolledUp.current = !atBottom;
+  }, []);
+
+  // Auto-scroll only on NEW messages (not history load), and only if user is at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history, chatMessages]);
+    if (!userScrolledUp.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages]);
+
+  // Scroll to bottom on initial history load
+  useEffect(() => {
+    if (history.length > 0 && !loadingHistory) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [history, loadingHistory]);
 
   const handleSend = () => {
     if (!input.trim() || !selectedUser) return;
     sendChatMessage(selectedUser.id, input.trim());
     setInput('');
+    userScrolledUp.current = false;
+    inputRef.current?.focus();
   };
 
-  // Merge history + real-time messages for the selected user
+  // Merge history + real-time messages for the selected user, dedup by ID
+  const historyIds = new Set(history.map((m) => m.id));
   const allMessages = [
     ...history.map((m) => ({
       id: m.id,
@@ -71,9 +106,10 @@ export function Chat() {
         ((m.senderId === user?.userId && m.recipientId === selectedUser.id) ||
          (m.senderId === selectedUser.id && m.recipientId === user?.userId))
       )
-      .filter((m) => !history.some((h) => h.content === m.content && Math.abs(new Date(h.createdAt).getTime() - new Date(m.createdAt).getTime()) < 3000))
-      .map((m, i) => ({
-        id: `rt-${i}`,
+      // Deduplicate: skip real-time messages that already exist in history (by content+time proximity)
+      .filter((m) => !history.some((h) => h.id === m.id) && !historyIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
         senderId: m.senderId,
         senderName: m.senderName,
         content: m.content,
@@ -85,16 +121,25 @@ export function Chat() {
     <div className="flex h-[calc(100vh-6rem)]">
       {/* Users list */}
       <div className="w-56 bg-white border-r border-slate-200 flex flex-col">
-        <div className="p-3 border-b border-slate-200">
+        <div className="p-3 border-b border-slate-200 flex items-center justify-between">
           <h2 className="font-semibold text-slate-800 text-sm">Users</h2>
+          <button onClick={loadUsers} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer" title="Refresh">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           {loadingUsers ? (
             <div className="p-4 text-center">
               <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full mx-auto" />
             </div>
+          ) : error && users.length === 0 ? (
+            <div className="p-4 text-center">
+              <AlertCircle className="w-5 h-5 text-red-400 mx-auto mb-2" />
+              <p className="text-xs text-red-500">{error}</p>
+              <button onClick={loadUsers} className="mt-2 text-xs text-blue-600 hover:underline cursor-pointer">Retry</button>
+            </div>
           ) : users.length === 0 ? (
-            <div className="p-4 text-center text-slate-400 text-xs">No users</div>
+            <div className="p-4 text-center text-slate-400 text-xs">No other users</div>
           ) : (
             users.map((u) => (
               <button
@@ -128,13 +173,29 @@ export function Chat() {
               </div>
               <div>
                 <div className="font-semibold text-slate-800 text-sm">{selectedUser.username}</div>
-                <div className="text-xs text-slate-400">{connected ? 'Online' : 'Connecting...'}</div>
+                <div className={`text-xs ${connected ? 'text-green-500' : 'text-slate-400'}`}>
+                  {connected ? 'Online' : 'Offline'}
+                </div>
               </div>
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {allMessages.length === 0 ? (
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto p-4 space-y-3"
+            >
+              {loadingHistory ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full mx-auto" />
+                  <p className="text-xs text-slate-400 mt-2">Loading messages...</p>
+                </div>
+              ) : error && allMessages.length === 0 ? (
+                <div className="text-center text-red-400 text-sm mt-8">
+                  <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-60" />
+                  <p>{error}</p>
+                </div>
+              ) : allMessages.length === 0 ? (
                 <div className="text-center text-slate-400 text-sm mt-8">No messages yet. Say hello!</div>
               ) : (
                 allMessages.map((msg) => {
@@ -148,7 +209,7 @@ export function Chat() {
                       }`}>
                         <div>{msg.content}</div>
                         <div className={`text-[10px] mt-1 ${isMe ? 'text-blue-200' : 'text-slate-400'}`}>
-                          {new Date(msg.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(msg.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     </div>
@@ -160,19 +221,26 @@ export function Chat() {
 
             {/* Input */}
             <div className="p-3 bg-white border-t border-slate-200">
+              {!connected && (
+                <div className="text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg mb-2">
+                  Not connected to server. Messages cannot be sent.
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <input
+                  ref={inputRef}
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                   placeholder="Type a message..."
-                  className="flex-1 px-4 py-2.5 bg-slate-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                  disabled={!connected}
+                  className="flex-1 px-4 py-2.5 bg-slate-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-200 disabled:opacity-50"
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
-                  className="p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40 cursor-pointer"
+                  disabled={!input.trim() || !connected}
+                  className="p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                 </button>

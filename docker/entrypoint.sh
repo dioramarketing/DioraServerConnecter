@@ -32,7 +32,8 @@ fi
 # 3. Fix ownership on workspace directories
 # ------------------------------------------------------------
 echo "[entrypoint] Fixing permissions on workspace directories..."
-chown devuser:devuser /workspace /storage /shared
+chown devuser:devuser /workspace /storage || true
+chown devuser:devuser /shared 2>/dev/null || echo "[entrypoint] /shared is read-only, skipping chown"
 
 # ------------------------------------------------------------
 # 4. Start supervisord (manages sshd)

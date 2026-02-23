@@ -11,6 +11,7 @@ import {
   MessageSquare,
   LogOut,
   Server,
+  Upload,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth';
 
@@ -24,6 +25,7 @@ const links = [
   { to: '/shared-folders', icon: FolderOpen, label: 'Shared Folders' },
   { to: '/notifications', icon: Bell, label: 'Notifications' },
   { to: '/messages', icon: MessageSquare, label: 'Messages' },
+  { to: '/releases', icon: Upload, label: 'Releases' },
 ];
 
 export function Sidebar() {

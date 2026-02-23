@@ -54,6 +54,7 @@ export const INTERNAL_NETWORK_PREFIX = '192.168.0.';
 export const SSD_CONTAINERS_PATH = '/data/ssd/containers';
 export const HDD_CONTAINERS_PATH = '/data/hdd/containers';
 export const HDD_SHARED_PATH = '/data/hdd/shared';
+export const SSD_UPDATES_PATH = '/data/ssd/updates';
 
 // ============================================================
 // Redis Keys

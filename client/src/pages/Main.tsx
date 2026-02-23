@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/auth';
 import { useWsStore } from '../stores/ws';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { Terminal } from '../components/Terminal';
 import { FileManager } from '../components/FileManager';
 import { Chat } from '../components/Chat';
 import { AdminPanel } from '../components/AdminPanel';
+import { UpdateChecker } from '../components/UpdateChecker';
 import {
   Monitor,
   Terminal as TerminalIcon,
@@ -21,6 +23,7 @@ import {
   Cpu,
   HardDrive,
   Shield,
+  RefreshCw,
 } from 'lucide-react';
 
 type Tab = 'connect' | 'terminal' | 'files' | 'chat' | 'settings' | 'admin';
@@ -29,10 +32,13 @@ export function MainPage() {
   const { user, logout, connectionInfo, fetchConnectionInfo, serverUrl, accessToken } = useAuthStore();
   const { connected: wsConnected, metrics, connect: wsConnect, disconnect: wsDisconnect } = useWsStore();
   const [activeTab, setActiveTab] = useState<Tab>('connect');
+  const [appVersion, setAppVersion] = useState('');
+  const [manualUpdateCheck, setManualUpdateCheck] = useState(false);
 
   useEffect(() => {
     fetchConnectionInfo();
     wsConnect();
+    getVersion().then(setAppVersion);
     return () => wsDisconnect();
   }, []);
 
@@ -79,6 +85,10 @@ export function MainPage() {
 
   return (
     <div className="min-h-screen flex">
+      <UpdateChecker />
+      {manualUpdateCheck && (
+        <UpdateChecker key="manual" manualCheck />
+      )}
       {/* Sidebar */}
       <div className="w-14 bg-slate-900 flex flex-col items-center py-3 gap-1">
         <Server className="w-6 h-6 text-blue-400 mb-4" />
@@ -186,9 +196,21 @@ export function MainPage() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">User</label>
                 <p className="text-sm text-slate-500">{user?.username} ({user?.role})</p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Version</label>
-                <p className="text-sm text-slate-500">1.0.0</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Version</label>
+                  <p className="text-sm text-slate-500">{appVersion || '...'}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setManualUpdateCheck(false);
+                    setTimeout(() => setManualUpdateCheck(true), 0);
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  업데이트 확인
+                </button>
               </div>
             </div>
           </div>

@@ -73,12 +73,14 @@ jobs:
         working-directory: client
         run: npm ci
 
-      # Tauri 빌드
+      # Tauri 빌드 (서명 포함)
       - name: Build Tauri app
         working-directory: client
         run: npx tauri build --target ${{ matrix.target }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # ─── 빌드 결과물 업로드 ───
 
@@ -90,6 +92,14 @@ jobs:
           name: DioraServerConnecter-Windows
           path: client/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
 
+      # Windows: update bundle (.exe.sig for Tauri v2 updater)
+      - name: Upload Windows update signature
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-Windows-Update
+          path: client/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
+
       # macOS: .dmg
       - name: Upload macOS DMG
         if: startsWith(matrix.platform, 'macos')
@@ -97,6 +107,14 @@ jobs:
         with:
           name: DioraServerConnecter-${{ matrix.name }}
           path: client/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+      # macOS: update signature (.dmg.sig for Tauri v2 updater)
+      - name: Upload macOS update signature
+        if: startsWith(matrix.platform, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-${{ matrix.name }}-Update
+          path: client/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg.sig
 
       # Linux: .deb + .AppImage
       - name: Upload Linux packages
@@ -107,6 +125,14 @@ jobs:
           path: |
             client/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             client/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+
+      # Linux: update signature (.AppImage.sig for Tauri v2 updater)
+      - name: Upload Linux update signature
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-Linux-Update
+          path: client/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.sig
 
   # ─── GitHub Release 생성 ───
   release:

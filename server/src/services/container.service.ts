@@ -8,14 +8,20 @@ import {
   DEFAULT_MEMORY_MB,
   DEFAULT_STORAGE_SSD_GB,
   DEFAULT_STORAGE_HDD_GB,
-  SSD_CONTAINERS_PATH,
-  HDD_CONTAINERS_PATH,
   HDD_SHARED_PATH,
 } from '@dsc/shared';
 import { docker } from '../lib/docker.js';
 import { prisma } from '../lib/prisma.js';
 import { logActivity } from './audit.service.js';
 import { mkdirSync, existsSync } from 'node:fs';
+import {
+  createAndMountImage,
+  unmountImage,
+  ensureMounted,
+  removeImage,
+  resizeImage,
+  getUserStoragePaths,
+} from './diskquota.service.js';
 
 // ── Create container ─────────────────────────────────
 export async function createContainer(params: {
@@ -40,13 +46,16 @@ export async function createContainer(params: {
   // Resource limits
   const cpuCores = params.cpuCores || DEFAULT_CPU_CORES;
   const memoryMb = params.memoryMb || DEFAULT_MEMORY_MB;
+  const storageSsdGb = params.storageSsdGb ?? DEFAULT_STORAGE_SSD_GB;
+  const storageHddGb = params.storageHddGb ?? DEFAULT_STORAGE_HDD_GB;
 
-  // Ensure directories exist
-  const ssdPath = `${SSD_CONTAINERS_PATH}/${user.username}/workspace`;
-  const hddPath = `${HDD_CONTAINERS_PATH}/${user.username}/storage`;
-  ensureDir(ssdPath);
-  ensureDir(hddPath);
+  // Storage paths
+  const paths = getUserStoragePaths(user.username);
   ensureDir(HDD_SHARED_PATH);
+
+  // Create and mount storage images (skips if 0GB)
+  createAndMountImage(paths.ssdImg, paths.ssdMount, storageSsdGb);
+  createAndMountImage(paths.hddImg, paths.hddMount, storageHddGb);
 
   // Create container record first
   const containerRecord = await prisma.container.create({
@@ -61,22 +70,17 @@ export async function createContainer(params: {
   // Update resource allocation
   await prisma.resourceAllocation.upsert({
     where: { userId: params.userId },
-    update: {
-      cpuCores,
-      memoryMb,
-      storageSsdGb: params.storageSsdGb || DEFAULT_STORAGE_SSD_GB,
-      storageHddGb: params.storageHddGb || DEFAULT_STORAGE_HDD_GB,
-    },
-    create: {
-      userId: params.userId,
-      cpuCores,
-      memoryMb,
-      storageSsdGb: params.storageSsdGb || DEFAULT_STORAGE_SSD_GB,
-      storageHddGb: params.storageHddGb || DEFAULT_STORAGE_HDD_GB,
-    },
+    update: { cpuCores, memoryMb, storageSsdGb, storageHddGb },
+    create: { userId: params.userId, cpuCores, memoryMb, storageSsdGb, storageHddGb },
   });
 
   try {
+    // Build bind mounts: only include volumes with >0 allocation
+    const binds: string[] = [];
+    if (storageSsdGb > 0) binds.push(`${paths.ssdMount}:/workspace`);
+    if (storageHddGb > 0) binds.push(`${paths.hddMount}:/storage`);
+    binds.push(`${HDD_SHARED_PATH}:/shared:ro`);
+
     // Create Docker container
     const container = await docker.createContainer({
       Image: CONTAINER_IMAGE,
@@ -91,15 +95,10 @@ export async function createContainer(params: {
         PortBindings: {
           '22/tcp': [{ HostPort: String(sshPort) }],
         },
-        Binds: [
-          `${ssdPath}:/workspace`,
-          `${hddPath}:/storage`,
-          `${HDD_SHARED_PATH}:/shared:ro`,
-        ],
-        // Resource limits
+        Binds: binds,
         NanoCpus: cpuCores * 1e9,
         Memory: memoryMb * 1024 * 1024,
-        MemorySwap: memoryMb * 1024 * 1024, // No swap
+        MemorySwap: memoryMb * 1024 * 1024,
         PidsLimit: 500,
         SecurityOpt: ['no-new-privileges:true'],
         CapDrop: ['ALL'],
@@ -109,22 +108,17 @@ export async function createContainer(params: {
       },
     });
 
-    // Start container
     await container.start();
 
-    // Update record with Docker container ID
     await prisma.container.update({
       where: { id: containerRecord.id },
-      data: {
-        containerId: container.id,
-        status: 'RUNNING',
-      },
+      data: { containerId: container.id, status: 'RUNNING' },
     });
 
     await logActivity({
       userId: params.userId,
       activityType: 'CONTAINER_CREATE',
-      description: `Container "${containerName}" created (CPU: ${cpuCores}, RAM: ${memoryMb}MB, SSH port: ${sshPort})`,
+      description: `Container "${containerName}" created (CPU: ${cpuCores}, RAM: ${memoryMb}MB, SSD: ${storageSsdGb}GB, HDD: ${storageHddGb}GB, SSH: ${sshPort})`,
       ipAddress: params.ipAddress,
     });
 
@@ -140,8 +134,16 @@ export async function createContainer(params: {
 
 // ── Start container ──────────────────────────────────
 export async function startContainer(userId: string, ipAddress?: string) {
-  const record = await prisma.container.findUniqueOrThrow({ where: { userId } });
+  const record = await prisma.container.findUniqueOrThrow({
+    where: { userId },
+    include: { user: { select: { username: true } } },
+  });
   if (!record.containerId) throw new Error('Container not initialized');
+
+  // Re-mount storage images (may have been lost after reboot)
+  const paths = getUserStoragePaths(record.user.username);
+  ensureMounted(paths.ssdImg, paths.ssdMount);
+  ensureMounted(paths.hddImg, paths.hddMount);
 
   const container = docker.getContainer(record.containerId);
   await container.start();
@@ -196,7 +198,10 @@ export async function restartContainer(userId: string, ipAddress?: string) {
 
 // ── Remove container ─────────────────────────────────
 export async function removeContainer(userId: string, ipAddress?: string) {
-  const record = await prisma.container.findUniqueOrThrow({ where: { userId } });
+  const record = await prisma.container.findUniqueOrThrow({
+    where: { userId },
+    include: { user: { select: { username: true } } },
+  });
 
   if (record.containerId) {
     try {
@@ -207,6 +212,11 @@ export async function removeContainer(userId: string, ipAddress?: string) {
       // Container may not exist in Docker
     }
   }
+
+  // Unmount storage images (keep the files so data isn't lost)
+  const paths = getUserStoragePaths(record.user.username);
+  unmountImage(paths.ssdMount);
+  unmountImage(paths.hddMount);
 
   await prisma.container.delete({ where: { id: record.id } });
 
@@ -230,16 +240,13 @@ export async function rebuildContainer(userId: string, ipAddress?: string) {
     data: { status: 'REBUILDING' },
   });
 
-  // Get SSH keys for the user
   const sshKeys = await prisma.sshKey.findMany({
     where: { userId, isActive: true },
   });
   const sshPublicKey = sshKeys.map(k => k.publicKey).join('\n');
-
-  // Get resource allocation
   const resources = await prisma.resourceAllocation.findUnique({ where: { userId } });
 
-  // Remove old container
+  // Remove old Docker container (keep storage images intact)
   if (record.containerId) {
     try {
       const container = docker.getContainer(record.containerId);
@@ -250,7 +257,7 @@ export async function rebuildContainer(userId: string, ipAddress?: string) {
 
   await prisma.container.delete({ where: { id: record.id } });
 
-  // Recreate
+  // Recreate with same storage (images already exist, createAndMountImage will just re-mount)
   await createContainer({
     userId,
     cpuCores: resources?.cpuCores,
@@ -267,6 +274,39 @@ export async function rebuildContainer(userId: string, ipAddress?: string) {
     description: `Container "${record.name}" rebuilt`,
     ipAddress,
   });
+}
+
+// ── Update storage quota (live resize) ───────────────
+export async function updateStorageQuota(userId: string, storageSsdGb: number, storageHddGb: number) {
+  const record = await prisma.container.findUnique({
+    where: { userId },
+    include: { user: { select: { username: true } } },
+  });
+  if (!record) return; // No container, just update DB (done by caller)
+
+  const paths = getUserStoragePaths(record.user.username);
+
+  // Resize SSD
+  if (storageSsdGb > 0) {
+    if (!existsSync(paths.ssdImg)) {
+      createAndMountImage(paths.ssdImg, paths.ssdMount, storageSsdGb);
+    } else {
+      resizeImage(paths.ssdImg, paths.ssdMount, storageSsdGb);
+    }
+  } else {
+    removeImage(paths.ssdImg, paths.ssdMount);
+  }
+
+  // Resize HDD
+  if (storageHddGb > 0) {
+    if (!existsSync(paths.hddImg)) {
+      createAndMountImage(paths.hddImg, paths.hddMount, storageHddGb);
+    } else {
+      resizeImage(paths.hddImg, paths.hddMount, storageHddGb);
+    }
+  } else {
+    removeImage(paths.hddImg, paths.hddMount);
+  }
 }
 
 // ── Get container status ─────────────────────────────

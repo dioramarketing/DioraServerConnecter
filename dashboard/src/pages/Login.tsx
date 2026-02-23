@@ -1,15 +1,24 @@
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import { Server } from 'lucide-react';
 
 export function LoginPage() {
   const login = useAuthStore((s) => s.login);
   const verify2fa = useAuthStore((s) => s.verify2fa);
+  const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [twoFaState, setTwoFaState] = useState<{ sessionId: string; code: string } | null>(null);
+
+  // Already logged in → redirect to main page
+  if (user) {
+    navigate('/', { replace: true });
+    return null;
+  }
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -21,6 +30,8 @@ export function LoginPage() {
         setTwoFaState({ sessionId: result.twoFaSessionId, code: '' });
       } else if (result.requiresDeviceApproval) {
         setError('Device pending approval. Contact your administrator.');
+      } else {
+        navigate('/', { replace: true });
       }
     } catch (err: any) {
       setError(err.message);
@@ -36,6 +47,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       await verify2fa(twoFaState.sessionId, twoFaState.code);
+      navigate('/', { replace: true });
     } catch (err: any) {
       setError(err.message);
     } finally {

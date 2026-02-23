@@ -31,11 +31,24 @@ interface AuthState {
 }
 
 async function apiRequest<T>(serverUrl: string, path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options.headers as Record<string, string>) };
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
+  if (options.body) headers['Content-Type'] = 'application/json';
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${serverUrl}/api/v1${path}`, { ...options, headers });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || 'Request failed');
+
+  let res: Response;
+  try {
+    res = await fetch(`${serverUrl}/api/v1${path}`, { ...options, headers });
+  } catch {
+    throw new Error('Network error: cannot reach server');
+  }
+
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`Server error (${res.status})`);
+  }
+  if (!data.success) throw new Error(data.error || data.message || 'Request failed');
   return data.data;
 }
 

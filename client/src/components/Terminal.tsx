@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useAuthStore } from '../stores/auth';
+
+// Safe base64 encode that handles UTF-8
+function encodeBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
 
 export function Terminal() {
   const { serverUrl, accessToken } = useAuthStore();
@@ -11,63 +19,104 @@ export function Terminal() {
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const onDataDisposable = useRef<{ dispose: () => void } | null>(null);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
   const [errorMsg, setErrorMsg] = useState('');
 
-  const connect = () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+  const connect = useCallback(() => {
+    if (!serverUrl || !accessToken) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     setStatus('connecting');
     setErrorMsg('');
 
-    const term = new XTerm({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-      theme: {
-        background: '#0f172a',
-        foreground: '#e2e8f0',
-        cursor: '#60a5fa',
-        selectionBackground: '#334155',
-        black: '#1e293b',
-        red: '#f87171',
-        green: '#4ade80',
-        yellow: '#facc15',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#22d3ee',
-        white: '#e2e8f0',
-      },
-    });
+    // Initialize xterm if needed
+    if (!xtermRef.current) {
+      const term = new XTerm({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+        theme: {
+          background: '#0f172a',
+          foreground: '#e2e8f0',
+          cursor: '#60a5fa',
+          selectionBackground: '#334155',
+          black: '#1e293b',
+          red: '#f87171',
+          green: '#4ade80',
+          yellow: '#facc15',
+          blue: '#60a5fa',
+          magenta: '#c084fc',
+          cyan: '#22d3ee',
+          white: '#e2e8f0',
+        },
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
 
-    const fit = new FitAddon();
-    term.loadAddon(fit);
+      // Handle Ctrl+V / Ctrl+Shift+V paste
+      term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'v' && e.type === 'keydown') {
+          navigator.clipboard.readText().then((text) => {
+            if (text && wsRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+              wsRef.current.send(JSON.stringify({
+                type: 'TERMINAL_DATA',
+                payload: { sessionId: sessionIdRef.current, data: encodeBase64(text) },
+                timestamp: new Date().toISOString(),
+              }));
+            }
+          }).catch(() => {});
+          return false; // prevent default
+        }
+        // Allow Ctrl+C to copy when there's a selection
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && e.type === 'keydown' && term.hasSelection()) {
+          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+          return false;
+        }
+        return true;
+      });
 
-    if (termRef.current) {
-      termRef.current.innerHTML = '';
-      term.open(termRef.current);
-      fit.fit();
+      if (termRef.current) {
+        termRef.current.innerHTML = '';
+        term.open(termRef.current);
+        fit.fit();
+      }
+
+      xtermRef.current = term;
+      fitRef.current = fit;
     }
 
-    xtermRef.current = term;
-    fitRef.current = fit;
-
+    const term = xtermRef.current!;
     const protocol = serverUrl.startsWith('https') ? 'wss' : 'ws';
     const wsUrl = `${protocol}://${serverUrl.replace(/^https?:\/\//, '')}/ws`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
+    // Connection timeout
+    const connectTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+        setStatus('error');
+        setErrorMsg('Connection timed out');
+      }
+    }, 10000);
+
     ws.onopen = () => {
+      clearTimeout(connectTimeout);
       ws.send(JSON.stringify({ type: 'AUTH', payload: accessToken, timestamp: new Date().toISOString() }));
     };
 
     ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
+      let msg: any;
+      try {
+        msg = JSON.parse(e.data);
+      } catch {
+        return; // ignore malformed messages
+      }
 
       if (msg.type === 'AUTH_OK') {
-        // Open terminal session
         const { cols, rows } = term;
-        ws.send(JSON.stringify({ type: 'TERMINAL_OPEN', payload: { cols, rows }, timestamp: new Date().toISOString() }));
+        ws.send(JSON.stringify({ type: 'TERMINAL_OPEN', payload: { cols: cols || 80, rows: rows || 24 }, timestamp: new Date().toISOString() }));
         return;
       }
 
@@ -75,23 +124,25 @@ export function Terminal() {
         sessionIdRef.current = msg.payload.sessionId;
         setStatus('connected');
 
-        // Send input from xterm to WebSocket
-        term.onData((data) => {
+        // Dispose previous onData listener before adding new one
+        if (onDataDisposable.current) onDataDisposable.current.dispose();
+        onDataDisposable.current = term.onData((data) => {
           if (ws.readyState === WebSocket.OPEN && sessionIdRef.current) {
             ws.send(JSON.stringify({
               type: 'TERMINAL_DATA',
-              payload: { sessionId: sessionIdRef.current, data: btoa(data) },
+              payload: { sessionId: sessionIdRef.current, data: encodeBase64(data) },
               timestamp: new Date().toISOString(),
             }));
           }
         });
-
         return;
       }
 
       if (msg.type === 'TERMINAL_DATA') {
-        const decoded = atob(msg.payload.data);
-        term.write(decoded);
+        try {
+          const decoded = atob(msg.payload.data);
+          term.write(decoded);
+        } catch { /* ignore decode errors */ }
         return;
       }
 
@@ -111,15 +162,17 @@ export function Terminal() {
     };
 
     ws.onclose = () => {
-      if (status !== 'error') setStatus('disconnected');
+      clearTimeout(connectTimeout);
+      setStatus((prev) => prev === 'error' ? 'error' : 'disconnected');
       sessionIdRef.current = null;
     };
 
     ws.onerror = () => {
+      clearTimeout(connectTimeout);
       setStatus('error');
       setErrorMsg('WebSocket connection failed');
     };
-  };
+  }, [serverUrl, accessToken]);
 
   // Handle resize
   useEffect(() => {
@@ -142,15 +195,19 @@ export function Terminal() {
 
     return () => {
       observer.disconnect();
+      onDataDisposable.current?.dispose();
       wsRef.current?.close();
+      wsRef.current = null;
       xtermRef.current?.dispose();
+      xtermRef.current = null;
+      fitRef.current = null;
     };
   }, []);
 
   // Auto-connect on mount
   useEffect(() => {
-    connect();
-  }, []);
+    if (serverUrl && accessToken) connect();
+  }, [connect]);
 
   return (
     <div className="h-full flex flex-col">
@@ -173,7 +230,7 @@ export function Terminal() {
              status === 'connecting' ? 'Connecting...' :
              status === 'error' ? 'Error' : 'Disconnected'}
           </span>
-          {status !== 'connected' && status !== 'connecting' && (
+          {(status === 'disconnected' || status === 'error') && (
             <button
               onClick={connect}
               className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer"

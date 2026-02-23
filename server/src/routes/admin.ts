@@ -16,8 +16,8 @@ const updateUserSchema = z.object({
 const resourceSchema = z.object({
   cpuCores: z.number().min(1).max(8).optional(),
   memoryMb: z.number().min(1024).max(32768).optional(),
-  storageSsdGb: z.number().min(10).max(200).optional(),
-  storageHddGb: z.number().min(50).max(1000).optional(),
+  storageSsdGb: z.number().min(0).max(200).optional(),
+  storageHddGb: z.number().min(0).max(1000).optional(),
 });
 
 const sharedFolderSchema = z.object({

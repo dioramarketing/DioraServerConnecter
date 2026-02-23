@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { useAuthStore } from './auth';
 
 interface ChatMessage {
+  id: string;
   senderId: string;
   senderName: string;
   recipientId?: string;
@@ -22,6 +23,7 @@ interface WsState {
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let msgCounter = 0;
 
 export const useWsStore = create<WsState>((set, get) => ({
   connected: false,
@@ -30,22 +32,27 @@ export const useWsStore = create<WsState>((set, get) => ({
   notifications: [],
 
   connect: () => {
-    if (ws?.readyState === WebSocket.OPEN) return;
+    // Guard against OPEN and CONNECTING states
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+    // Clear any pending reconnect timer
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
     const { serverUrl, accessToken } = useAuthStore.getState();
-    if (!accessToken) return;
+    if (!accessToken || !serverUrl) return;
 
     const protocol = serverUrl.startsWith('https') ? 'wss' : 'ws';
     const wsUrl = `${protocol}://${serverUrl.replace(/^https?:\/\//, '')}/ws`;
-    ws = new WebSocket(wsUrl);
+    const socket = new WebSocket(wsUrl);
+    ws = socket;
 
-    ws.onopen = () => {
-      if (ws && accessToken) {
-        ws.send(JSON.stringify({ type: 'AUTH', payload: accessToken, timestamp: new Date().toISOString() }));
+    socket.onopen = () => {
+      if (socket.readyState === WebSocket.OPEN && accessToken) {
+        socket.send(JSON.stringify({ type: 'AUTH', payload: accessToken, timestamp: new Date().toISOString() }));
       }
     };
 
-    ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'AUTH_OK') {
@@ -58,6 +65,7 @@ export const useWsStore = create<WsState>((set, get) => ({
         }
         if (msg.type === 'CHAT_MESSAGE') {
           const chatMsg: ChatMessage = {
+            id: `ws-${++msgCounter}`,
             ...msg.payload,
             createdAt: msg.timestamp,
           };
@@ -72,44 +80,52 @@ export const useWsStore = create<WsState>((set, get) => ({
           }));
           return;
         }
-      } catch { /* */ }
+      } catch { /* ignore malformed messages */ }
     };
 
-    ws.onclose = () => {
+    socket.onclose = () => {
       set({ connected: false });
-      reconnectTimer = setTimeout(() => get().connect(), 5000);
+      // Only reconnect if this is still the active socket
+      if (ws === socket) {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => get().connect(), 5000);
+      }
     };
 
-    ws.onerror = () => ws?.close();
+    socket.onerror = () => {
+      socket.close();
+    };
   },
 
   disconnect: () => {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    ws?.close();
-    ws = null;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (ws) { ws.close(); ws = null; }
     set({ connected: false });
   },
 
   sendChatMessage: (recipientId: string, content: string) => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'CHAT_MESSAGE',
-        payload: { recipientId, content },
-        timestamp: new Date().toISOString(),
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const now = new Date().toISOString();
+    ws.send(JSON.stringify({
+      type: 'CHAT_MESSAGE',
+      payload: { recipientId, content },
+      timestamp: now,
+    }));
+
+    // Add to local messages immediately (optimistic)
+    const { user } = useAuthStore.getState();
+    if (user) {
+      set((state) => ({
+        chatMessages: [...state.chatMessages, {
+          id: `local-${++msgCounter}`,
+          senderId: user.userId,
+          senderName: user.username,
+          recipientId,
+          content,
+          createdAt: now,
+        }],
       }));
-      // Add to local messages immediately
-      const { user } = useAuthStore.getState();
-      if (user) {
-        set((state) => ({
-          chatMessages: [...state.chatMessages, {
-            senderId: user.userId,
-            senderName: user.username,
-            recipientId,
-            content,
-            createdAt: new Date().toISOString(),
-          }],
-        }));
-      }
     }
   },
 

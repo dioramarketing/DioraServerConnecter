@@ -9,10 +9,18 @@ function sanitizePath(inputPath: string): string {
   return '/' + parts.join('/');
 }
 
+class FileServiceError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
 async function getContainerForUser(userId: string) {
   const record = await prisma.container.findUnique({ where: { userId } });
-  if (!record?.containerId) throw new Error('No container assigned');
-  if (record.status !== 'RUNNING') throw new Error('Container is not running');
+  if (!record?.containerId) throw new FileServiceError('No container assigned');
+  if (record.status !== 'RUNNING') throw new FileServiceError('Container is not running');
   return docker.getContainer(record.containerId);
 }
 
@@ -30,15 +38,27 @@ async function execInContainer(container: any, cmd: string[]): Promise<{ stdout:
     const chunks: Buffer[] = [];
     stream.on('data', (chunk: Buffer) => chunks.push(chunk));
     stream.on('end', async () => {
-      const output = Buffer.concat(chunks).toString('utf-8');
-      // Demux: Docker multiplexes stdout/stderr with 8-byte header frames
-      // For simplicity, just clean up control chars
-      const cleaned = output.replace(/[\x00-\x08\x0e-\x1f]/g, '').trim();
+      const raw = Buffer.concat(chunks);
+      // Demux Docker multiplexed stream: each frame has 8-byte header
+      // [stream_type(1), 0, 0, 0, size(4 big-endian)] followed by payload
+      const stdoutParts: Buffer[] = [];
+      let offset = 0;
+      while (offset + 8 <= raw.length) {
+        const streamType = raw[offset]; // 1=stdout, 2=stderr
+        const frameSize = raw.readUInt32BE(offset + 4);
+        offset += 8;
+        if (offset + frameSize > raw.length) break;
+        if (streamType === 1) { // stdout only
+          stdoutParts.push(raw.subarray(offset, offset + frameSize));
+        }
+        offset += frameSize;
+      }
+      const stdout = Buffer.concat(stdoutParts).toString('utf-8').trim();
       try {
         const info = await exec.inspect();
-        resolve({ stdout: cleaned, exitCode: info.ExitCode ?? 0 });
+        resolve({ stdout, exitCode: info.ExitCode ?? 0 });
       } catch {
-        resolve({ stdout: cleaned, exitCode: 0 });
+        resolve({ stdout, exitCode: 0 });
       }
     });
     stream.on('error', reject);
@@ -156,4 +176,33 @@ export async function renameItem(userId: string, oldPath: string, newPath: strin
   const safeNew = sanitizePath(newPath);
   const { exitCode } = await execInContainer(container, ['mv', safeOld, safeNew]);
   if (exitCode !== 0) throw new Error('Failed to rename/move item');
+}
+
+export async function previewFile(userId: string, filePath: string): Promise<{ content: string; truncated: boolean }> {
+  const container = await getContainerForUser(userId);
+  const safePath = sanitizePath(filePath);
+  // Read first 100KB of file as text
+  const { stdout } = await execInContainer(container, [
+    '/bin/sh', '-c',
+    `head -c 102400 "${safePath}" 2>/dev/null | base64`,
+  ]);
+  const cleaned = stdout.replace(/\s/g, '');
+  if (!cleaned) throw new FileServiceError('Cannot read file');
+  const content = Buffer.from(cleaned, 'base64').toString('utf-8');
+  const { stdout: sizeOut } = await execInContainer(container, [
+    '/bin/sh', '-c', `stat -c%s "${safePath}" 2>/dev/null || echo "0"`,
+  ]);
+  const fileSize = parseInt(sizeOut.trim(), 10) || 0;
+  return { content, truncated: fileSize > 102400 };
+}
+
+export async function searchFiles(userId: string, basePath: string, query: string): Promise<string[]> {
+  const container = await getContainerForUser(userId);
+  const safePath = sanitizePath(basePath);
+  const safeQuery = query.replace(/['"\\]/g, '');
+  const { stdout } = await execInContainer(container, [
+    '/bin/sh', '-c',
+    `find "${safePath}" -maxdepth 5 -iname "*${safeQuery}*" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -50`,
+  ]);
+  return stdout.split('\n').filter(l => l.trim());
 }

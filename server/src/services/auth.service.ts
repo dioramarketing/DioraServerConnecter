@@ -398,6 +398,7 @@ async function issueTokens(
     refreshToken,
     user: {
       id: user.id,
+      userId: user.id,
       username: user.username,
       role: user.role,
     },

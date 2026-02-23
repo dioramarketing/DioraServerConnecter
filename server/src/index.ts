@@ -3,12 +3,16 @@ import fastifyCors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
+import fastifyMultipart from '@fastify/multipart';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { API_PREFIX, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS, AUTH_RATE_LIMIT_MAX, AUTH_RATE_LIMIT_WINDOW_MS } from '@dsc/shared';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
+
+// BigInt JSON serialization support
+(BigInt.prototype as any).toJSON = function () { return Number(this); };
 
 // Routes
 import authRoutes from './routes/auth.js';
@@ -19,6 +23,8 @@ import adminRoutes from './routes/admin.js';
 import notificationRoutes from './routes/notification.js';
 import messageRoutes from './routes/message.js';
 import fileRoutes from './routes/file.js';
+import updateRoutes from './routes/update.js';
+import adminReleaseRoutes from './routes/admin-releases.js';
 import websocketPlugin from './plugins/websocket.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +44,7 @@ async function buildServer() {
   await fastify.register(fastifyCors, {
     origin: true,
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   });
 
   await fastify.register(fastifyRateLimit, {
@@ -47,13 +54,16 @@ async function buildServer() {
 
   await fastify.register(fastifyWebsocket);
 
+  await fastify.register(fastifyMultipart, {
+    limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+  });
+
   // ── Dashboard SPA static files ───────────────────
   const dashboardPath = join(__dirname, '../../dashboard/dist');
   if (existsSync(dashboardPath)) {
     await fastify.register(fastifyStatic, {
       root: dashboardPath,
       prefix: '/',
-      decorateReply: false,
     });
   }
 
@@ -94,6 +104,8 @@ async function buildServer() {
   await fastify.register(notificationRoutes, { prefix: `${API_PREFIX}/notifications` });
   await fastify.register(messageRoutes, { prefix: `${API_PREFIX}/messages` });
   await fastify.register(fileRoutes, { prefix: `${API_PREFIX}/files` });
+  await fastify.register(updateRoutes, { prefix: `${API_PREFIX}/updates` });
+  await fastify.register(adminReleaseRoutes, { prefix: `${API_PREFIX}/admin/releases` });
   await fastify.register(websocketPlugin);
 
   // ── SPA fallback ─────────────────────────────────
