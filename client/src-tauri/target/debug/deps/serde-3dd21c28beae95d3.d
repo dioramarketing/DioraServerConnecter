@@ -1,0 +1,14 @@
+/home/diorama/DioraServerConnecter/client/src-tauri/target/debug/deps/serde-3dd21c28beae95d3.d: /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/diorama/DioraServerConnecter/client/src-tauri/target/debug/build/serde-47705601d1a6619c/out/private.rs
+
+/home/diorama/DioraServerConnecter/client/src-tauri/target/debug/deps/libserde-3dd21c28beae95d3.rlib: /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/diorama/DioraServerConnecter/client/src-tauri/target/debug/build/serde-47705601d1a6619c/out/private.rs
+
+/home/diorama/DioraServerConnecter/client/src-tauri/target/debug/deps/libserde-3dd21c28beae95d3.rmeta: /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/diorama/DioraServerConnecter/client/src-tauri/target/debug/build/serde-47705601d1a6619c/out/private.rs
+
+/home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/diorama/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/diorama/DioraServerConnecter/client/src-tauri/target/debug/build/serde-47705601d1a6619c/out/private.rs:
+
+# env-dep:OUT_DIR=/home/diorama/DioraServerConnecter/client/src-tauri/target/debug/build/serde-47705601d1a6619c/out

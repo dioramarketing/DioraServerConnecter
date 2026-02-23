@@ -1,0 +1,46 @@
+# DioraServerConnecter SSH Server Configuration
+
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+
+# Authentication
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitRootLogin no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM no
+
+# Authorized users
+AllowUsers devuser
+
+# Key files
+AuthorizedKeysFile .ssh/authorized_keys
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Keep-alive
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# Security hardening
+MaxAuthTries 3
+MaxSessions 10
+LoginGraceTime 30
+
+# Disable unnecessary features
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+
+# Logging
+SyslogFacility AUTH
+LogLevel INFO
+
+# Allow TCP forwarding for dev tools (port forwarding)
+AllowTcpForwarding yes
+
+# Subsystem
+Subsystem sftp /usr/lib/openssh/sftp-server
