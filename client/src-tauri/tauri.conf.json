@@ -1,6 +1,6 @@
 {
   "productName": "DioraServerConnecter",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "identifier": "kr.co.dioramarketing.serverconnecter",
   "build": {
     "frontendDist": "../dist",
