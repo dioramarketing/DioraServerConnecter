@@ -1,0 +1,155 @@
+name: Build & Release
+
+# v1.0.0 같은 태그를 push하면 자동 빌드
+# 사용법: git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # 수동 실행도 가능
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: macOS-ARM
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            name: macOS-Intel
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: Linux
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri -> target
+
+      # Linux 전용: 시스템 의존성 설치
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev
+
+      # 의존성 설치
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      # Tauri 빌드
+      - name: Build Tauri app
+        working-directory: client
+        run: npx tauri build --target ${{ matrix.target }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─── 빌드 결과물 업로드 ───
+
+      # Windows: NSIS .exe
+      - name: Upload Windows installer
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-Windows
+          path: client/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+
+      # macOS: .dmg
+      - name: Upload macOS DMG
+        if: startsWith(matrix.platform, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-${{ matrix.name }}
+          path: client/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+      # Linux: .deb + .AppImage
+      - name: Upload Linux packages
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DioraServerConnecter-Linux
+          path: |
+            client/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            client/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+
+  # ─── GitHub Release 생성 ───
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | head -20
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: DioraServerConnecter ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/DioraServerConnecter-Windows/*.exe
+            artifacts/DioraServerConnecter-macOS-ARM/*.dmg
+            artifacts/DioraServerConnecter-macOS-Intel/*.dmg
+            artifacts/DioraServerConnecter-Linux/*.deb
+            artifacts/DioraServerConnecter-Linux/*.AppImage
+          body: |
+            ## DioraServerConnecter ${{ github.ref_name }}
+
+            ### 다운로드
+            | 플랫폼 | 파일 | 설치 방법 |
+            |--------|------|----------|
+            | **Windows** | `.exe` | 더블클릭 → 설치 마법사 따라하기 |
+            | **macOS (Apple Silicon)** | `.dmg` (ARM) | 더블클릭 → Applications 폴더로 드래그 |
+            | **macOS (Intel)** | `.dmg` (Intel) | 더블클릭 → Applications 폴더로 드래그 |
+            | **Linux (Ubuntu/Debian)** | `.deb` | `sudo dpkg -i 파일명.deb` |
+            | **Linux (범용)** | `.AppImage` | `chmod +x 파일명.AppImage && ./파일명.AppImage` |
+
+            ### 최초 실행 시
+            1. 앱 실행 → 서버 주소 입력 (관리자에게 확인)
+            2. ID/PW로 로그인
+            3. 기기 승인 대기 (관리자가 승인)
+            4. 승인 완료 후 VS Code 연결 / 터미널 사용 가능
