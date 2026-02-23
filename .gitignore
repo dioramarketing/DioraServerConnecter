@@ -7,3 +7,5 @@ dist/
 .turbo/
 coverage/
 .prisma/
+target/
+*.fingerprint
