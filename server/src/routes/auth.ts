@@ -8,7 +8,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
   deviceFingerprint: z.string().min(1),
   deviceName: z.string().min(1),
-  deviceOs: z.string().min(1),
+  deviceOs: z.string().default('Unknown'),
 });
 
 const twoFaSchema = z.object({

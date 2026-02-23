@@ -18,6 +18,7 @@ import connectionRoutes from './routes/connection.js';
 import adminRoutes from './routes/admin.js';
 import notificationRoutes from './routes/notification.js';
 import messageRoutes from './routes/message.js';
+import fileRoutes from './routes/file.js';
 import websocketPlugin from './plugins/websocket.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -92,6 +93,7 @@ async function buildServer() {
   await fastify.register(adminRoutes, { prefix: `${API_PREFIX}/admin` });
   await fastify.register(notificationRoutes, { prefix: `${API_PREFIX}/notifications` });
   await fastify.register(messageRoutes, { prefix: `${API_PREFIX}/messages` });
+  await fastify.register(fileRoutes, { prefix: `${API_PREFIX}/files` });
   await fastify.register(websocketPlugin);
 
   // ── SPA fallback ─────────────────────────────────

@@ -12,6 +12,17 @@ const sendSchema = z.object({
 export default async function messageRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
+  // Get users for chat (active users list)
+  fastify.get('/users', async (request, reply) => {
+    const { prisma } = await import('../lib/prisma.js');
+    const users = await prisma.user.findMany({
+      where: { status: 'ACTIVE', id: { not: request.user!.sub! } },
+      select: { id: true, username: true, role: true },
+      orderBy: { username: 'asc' },
+    });
+    return reply.send({ success: true, data: users });
+  });
+
   // Send message
   fastify.post('/', async (request, reply) => {
     const body = sendSchema.parse(request.body);

@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/auth';
+import { useWsStore } from '../stores/ws';
 import { invoke } from '@tauri-apps/api/core';
+import { Terminal } from '../components/Terminal';
+import { FileManager } from '../components/FileManager';
+import { Chat } from '../components/Chat';
+import { AdminPanel } from '../components/AdminPanel';
 import {
   Monitor,
   Terminal as TerminalIcon,
@@ -15,35 +20,20 @@ import {
   Server,
   Cpu,
   HardDrive,
+  Shield,
 } from 'lucide-react';
 
-type Tab = 'connect' | 'terminal' | 'files' | 'chat' | 'settings';
+type Tab = 'connect' | 'terminal' | 'files' | 'chat' | 'settings' | 'admin';
 
 export function MainPage() {
   const { user, logout, connectionInfo, fetchConnectionInfo, serverUrl, accessToken } = useAuthStore();
+  const { connected: wsConnected, metrics, connect: wsConnect, disconnect: wsDisconnect } = useWsStore();
   const [activeTab, setActiveTab] = useState<Tab>('connect');
-  const [wsConnected, setWsConnected] = useState(false);
-  const [metrics, setMetrics] = useState<any>(null);
 
   useEffect(() => {
     fetchConnectionInfo();
-
-    // WebSocket for real-time updates
-    const protocol = serverUrl.startsWith('https') ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${serverUrl.replace(/^https?:\/\//, '')}/ws`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      if (accessToken) ws.send(JSON.stringify({ type: 'AUTH', payload: accessToken, timestamp: new Date().toISOString() }));
-    };
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'AUTH_OK') setWsConnected(true);
-      if (msg.type === 'METRICS_UPDATE') setMetrics(msg.payload);
-    };
-    ws.onclose = () => setWsConnected(false);
-
-    return () => ws.close();
+    wsConnect();
+    return () => wsDisconnect();
   }, []);
 
   const openVsCode = async () => {
@@ -58,14 +48,12 @@ export function MainPage() {
   const generateAndRegisterKey = async () => {
     try {
       const key = await invoke<{ public_key: string; key_path: string }>('generate_ssh_key', { label: user?.username || 'default' });
-      // Register with server
       await fetch(`${serverUrl}/api/v1/connection/ssh-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ publicKey: key.public_key, label: `${user?.username}-client` }),
       });
 
-      // Write SSH config
       if (connectionInfo) {
         await invoke('write_ssh_config', {
           host: connectionInfo.host,
@@ -80,12 +68,13 @@ export function MainPage() {
     }
   };
 
-  const tabs = [
-    { id: 'connect' as Tab, icon: Monitor, label: 'Connect' },
-    { id: 'terminal' as Tab, icon: TerminalIcon, label: 'Terminal' },
-    { id: 'files' as Tab, icon: FolderOpen, label: 'Files' },
-    { id: 'chat' as Tab, icon: MessageSquare, label: 'Chat' },
-    { id: 'settings' as Tab, icon: Settings, label: 'Settings' },
+  const tabs: { id: Tab; icon: typeof Monitor; label: string }[] = [
+    { id: 'connect', icon: Monitor, label: 'Connect' },
+    { id: 'terminal', icon: TerminalIcon, label: 'Terminal' },
+    { id: 'files', icon: FolderOpen, label: 'Files' },
+    { id: 'chat', icon: MessageSquare, label: 'Chat' },
+    ...(user?.role === 'ADMIN' ? [{ id: 'admin' as Tab, icon: Shield, label: 'Admin' }] : []),
+    { id: 'settings', icon: Settings, label: 'Settings' },
   ];
 
   return (
@@ -161,14 +150,14 @@ export function MainPage() {
                     <Cpu className="w-5 h-5 text-blue-500" />
                     <div>
                       <p className="text-sm text-slate-500">CPU</p>
-                      <p className="font-bold">{metrics.host.cpuPercent.toFixed(1)}%</p>
+                      <p className="font-bold">{metrics.host?.cpuPercent?.toFixed(1) ?? 0}%</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <HardDrive className="w-5 h-5 text-purple-500" />
                     <div>
                       <p className="text-sm text-slate-500">Memory</p>
-                      <p className="font-bold">{(metrics.host.memoryUsedMb / 1024).toFixed(1)} GB</p>
+                      <p className="font-bold">{((metrics.host?.memoryUsedMb ?? 0) / 1024).toFixed(1)} GB</p>
                     </div>
                   </div>
                 </div>
@@ -177,34 +166,13 @@ export function MainPage() {
           </div>
         )}
 
-        {activeTab === 'terminal' && (
-          <div className="h-full">
-            <h1 className="text-2xl font-bold text-slate-800 mb-4">Terminal</h1>
-            <div className="bg-slate-900 rounded-xl p-4 h-96 flex items-center justify-center">
-              <p className="text-slate-400">SSH Terminal (xterm.js) - requires container connection</p>
-            </div>
-          </div>
-        )}
+        {activeTab === 'terminal' && <Terminal />}
 
-        {activeTab === 'files' && (
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-4">File Manager</h1>
-            <div className="bg-white rounded-xl p-8 border border-slate-200 text-center">
-              <FolderOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-400">SFTP File Manager - requires container connection</p>
-            </div>
-          </div>
-        )}
+        {activeTab === 'files' && <FileManager />}
 
-        {activeTab === 'chat' && (
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-4">Team Chat</h1>
-            <div className="bg-white rounded-xl p-8 border border-slate-200 text-center">
-              <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-400">Chat feature - connect to server first</p>
-            </div>
-          </div>
-        )}
+        {activeTab === 'chat' && <Chat />}
+
+        {activeTab === 'admin' && user?.role === 'ADMIN' && <AdminPanel />}
 
         {activeTab === 'settings' && (
           <div className="max-w-lg mx-auto">

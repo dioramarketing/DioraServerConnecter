@@ -26,7 +26,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       password,
       deviceFingerprint: 'dashboard-web',
       deviceName: 'Admin Dashboard',
-      deviceOs: navigator.platform,
+      deviceOs: (navigator as any).userAgentData?.platform || navigator.platform || 'Web',
     });
 
     if (data.requiresTwoFa) {
