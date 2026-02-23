@@ -44,7 +44,7 @@ fn log_and_show_error(msg: &str) {
     #[cfg(target_os = "windows")]
     {
         #[link(name = "user32")]
-        extern "system" {
+        unsafe extern "system" {
             fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, utype: u32) -> i32;
         }
         let text: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
